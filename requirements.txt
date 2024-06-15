@@ -43,7 +43,6 @@ jsonschema-specifications==2023.11.2
 kiwisolver==1.4.5
 linkify-it-py==2.0.2
 lit==17.0.6
-llava @ file:///your/path/to/LLaVA-UHD
 markdown-it-py==2.2.0
 markdown2==2.4.11
 MarkupSafe==2.1.3
