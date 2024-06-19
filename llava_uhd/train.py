@@ -108,6 +108,12 @@ class TrainingArguments(transformers.TrainingArguments):
     lora_weight_path: str = ""
     lora_bias: str = "none"
     mm_projector_lr: Optional[float] = None
+    vis_enc_lora_enable: bool = False
+    vis_lora_r: int = 64
+    vis_lora_alpha: int = 16
+    vis_lora_dropout: float = 0.05
+    vis_lora_weight_path: str = ""
+    vis_lora_bias: str = "none"
     group_by_modality_length: bool = field(default=False)
 
 
@@ -182,18 +188,18 @@ def find_all_linear_names(model):
 
 def find_all_vis_enc_linear_names(model):
     cls = torch.nn.Linear
-    lora_module_names = set()
-    multimodal_keywords = ['mm_projector', 'vision_tower', 'vision_resampler']
+    vis_enc_lora_module_names = set()
+    multimodal_keywords = ['k_proj', 'v_proj', 'q_proj','fc1', 'fc2']
     for name, module in model.named_modules():
         if any(mm_keyword in name for mm_keyword in multimodal_keywords):
             continue
-        if isinstance(module, cls):
+        if 'vision_tower' in name and isinstance(module, cls):
             names = name.split('.')
-            lora_module_names.add(names[0] if len(names) == 1 else names[-1])
+            vis_enc_lora_module_names.add(names[0] if len(names) == 1 else names[-1])
 
-    if 'lm_head' in lora_module_names: # needed for 16-bit
-        lora_module_names.remove('lm_head')
-    return list(lora_module_names)
+    if 'lm_head' in vis_enc_lora_module_names: # needed for 16-bit
+        vis_enc_lora_module_names.remove('lm_head')
+    return list(vis_enc_lora_module_names)
 
 def safe_save_model_for_hf_trainer(trainer: transformers.Trainer,
                                    output_dir: str):
@@ -633,7 +639,31 @@ def train():
             model_args=model_args,
             fsdp=training_args.fsdp
         )
-        
+        #-----------------------------------------------------#
+        #  vision tower 是否lora tuning
+        #-----------------------------------------------------#
+        # [Edited by lihao - 2024-06-19 19:53]
+        if training_args.vis_enc_lora_enable:
+            from peft import LoraConfig, get_peft_model
+            vis_enc_lora_config = LoraConfig(
+                r=training_args.vis_lora_r,
+                lora_alpha=training_args.vis_lora_alpha,
+                target_modules=find_all_vis_enc_linear_names(model),
+                lora_dropout=training_args.vis_lora_dropout,
+                bias=training_args.vis_lora_bias,
+                task_type="adapt_CLIPVisionTower",
+            )
+            if training_args.bits == 16:
+                if training_args.bf16:
+                    model.to(torch.bfloat16)
+                if training_args.fp16:
+                    model.to(torch.float16)
+            rank0_print("Adding LoRA adapters for vision encoder...")
+            print(model)
+            model = get_peft_model(model, vis_enc_lora_config)
+            print(model)
+            for p in model.get_model().position_embedding.parameters():
+                p.requires_grad = True
         vision_tower = model.get_vision_tower()
         vision_tower.to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device)
 
@@ -667,7 +697,8 @@ def train():
         training_args.use_im_start_end = model_args.mm_use_im_start_end
         model.config.mm_use_im_patch_token = model_args.mm_use_im_patch_token
         model.initialize_vision_tokenizer(model_args, tokenizer=tokenizer)
-
+        # print("model", model)
+        quit()
     if training_args.bits in [4, 8]:
         from peft.tuners.lora import LoraLayer
         for name, module in model.named_modules():
@@ -695,6 +726,7 @@ def train():
     #-----------------------------------------------------#
     #  训练器
     #-----------------------------------------------------#
+    # training args.max steps =5
     trainer = LLaVATrainer(
         model=model,
         tokenizer=tokenizer,
@@ -720,6 +752,12 @@ def train():
 
     model.config.use_cache = True
 
+    if training_args.vis_enc_lora_enable:
+        # merge the vision encoder LoRA adapters to the vision encoder weights
+        # model_to_merge = PeftModel.from_pretrained(AutoModelForCausalLM.from_pretrained(base_model).to(“cuda”), lora_adapter)
+        # merged_model = model_to_merge.merge_and_unload()
+        # merged_model.save_pretrained(merged_model)
+        peft_model.save_pretrained(lora_adapter, save_adapter=True, save_config=True)
     if training_args.lora_enable:
         state_dict = get_peft_state_maybe_zero_3(
             model.named_parameters(), training_args.lora_bias
