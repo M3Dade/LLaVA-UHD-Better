@@ -191,11 +191,16 @@ def find_all_vis_enc_linear_names(model):
     vis_enc_lora_module_names = set()
     multimodal_keywords = ['k_proj', 'v_proj', 'q_proj','fc1', 'fc2']
     for name, module in model.named_modules():
+        # print(name)
+        # if any(mm_keyword in name for mm_keyword in multimodal_keywords):
+        #     continue
+        
+        #如果name里有multimodal_keywords的关键字，就继续
         if any(mm_keyword in name for mm_keyword in multimodal_keywords):
-            continue
-        if 'vision_tower' in name and isinstance(module, cls):
-            names = name.split('.')
-            vis_enc_lora_module_names.add(names[0] if len(names) == 1 else names[-1])
+            if 'vision_tower' in name and isinstance(module, cls):
+                # print(name)
+                names = name.split('.')
+                vis_enc_lora_module_names.add(names[0] if len(names) == 1 else names[-1])
 
     if 'lm_head' in vis_enc_lora_module_names: # needed for 16-bit
         vis_enc_lora_module_names.remove('lm_head')
@@ -649,8 +654,8 @@ def train():
                 r=training_args.vis_lora_r,
                 lora_alpha=training_args.vis_lora_alpha,
                 target_modules=find_all_vis_enc_linear_names(model),
-                lora_dropout=training_args.vis_lora_dropout,
-                bias=training_args.vis_lora_bias,
+                lora_dropout=training_args.lora_dropout,
+                bias=training_args.lora_bias,
                 task_type="adapt_CLIPVisionTower",
             )
             if training_args.bits == 16:
@@ -659,13 +664,23 @@ def train():
                 if training_args.fp16:
                     model.to(torch.float16)
             rank0_print("Adding LoRA adapters for vision encoder...")
-            print(model)
             model = get_peft_model(model, vis_enc_lora_config)
-            print(model)
-            for p in model.get_model().position_embedding.parameters():
-                p.requires_grad = True
-        vision_tower = model.get_vision_tower()
-        vision_tower.to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device)
+            # for p in model.get_model().position_embedding.parameters():
+            #     p.requires_grad = True
+            # for name, module in model.named_modules():
+            #     if name.endswith('position_embedding'):            
+            #         print(f'{name} {module}')
+            vision_tower = model.get_vision_tower()
+            vision_tower.to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device)
+            print( model.get_model().vision_tower.parameters())
+            print( model.get_model().vision_tower.vision_tower.parameters())
+            print( model.get_model().vision_tower.vision_tower.vision_model.embeddings.parameters())
+            print( model.get_model().vision_tower.vision_tower.vision_model.embeddings.position_embedding.parameters())
+            for p in model.get_model().vision_tower.vision_tower.vision_model.embeddings.position_embedding.parameters():
+                    p.requires_grad = True
+        else:
+            vision_tower = model.get_vision_tower()
+            vision_tower.to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device)
 
         data_args.image_processor = vision_tower.image_processor
         data_args.is_multimodal = True
@@ -697,8 +712,7 @@ def train():
         training_args.use_im_start_end = model_args.mm_use_im_start_end
         model.config.mm_use_im_patch_token = model_args.mm_use_im_patch_token
         model.initialize_vision_tokenizer(model_args, tokenizer=tokenizer)
-        # print("model", model)
-        quit()
+
     if training_args.bits in [4, 8]:
         from peft.tuners.lora import LoraLayer
         for name, module in model.named_modules():
@@ -733,11 +747,12 @@ def train():
         args=training_args,
         **data_module
     )
-
-    # with open(f'tmp/debug_{local_rank}.txt', 'w') as f:
-    #     for name, param in model.named_parameters():
-    #         print(f'{name} {param.shape} {param.dtype} {param.device} {param.requires_grad}', file=f)
-
+    print("model3", model)
+    with open(f'/data1/zhenglh/LLaVA-UHD-Better/llava_uhd/tmp/debug_{local_rank}.txt', 'w') as f:
+        for name, param in model.named_parameters():
+            if 'vision_tower' in name:
+                print(f'{name} {param.shape} {param.dtype} {param.device} {param.requires_grad}', file=f)
+    # quit()
     #-----------------------------------------------------#
     #  检查 checkpoints 路径是否有保存的检查点
     #-----------------------------------------------------#

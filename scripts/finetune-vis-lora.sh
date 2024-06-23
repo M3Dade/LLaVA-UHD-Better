@@ -10,6 +10,7 @@ export WANDB_PROJECT=UHD
 deepspeed --master_port 29642 llava_uhd/train.py \
     --deepspeed ./scripts/zero3.json \
     --lora_enable True --lora_r 128 --lora_alpha 256 --mm_projector_lr 2e-5 \
+    --vis_enc_lora_enable True --vis_lora_r 128 --vis_lora_alpha 256   \
     --image_folder /data2/datasets/llava/ft_datasets \
     --data_path /data2/datasets/llava/llava_v1_5_mix665k.json \
     --model_name_or_path /data2/llm_common/vicuna-7b-v1.5 \
@@ -21,7 +22,7 @@ deepspeed --master_port 29642 llava_uhd/train.py \
     --mm_use_im_start_end False \
     --mm_use_im_patch_token False \
     --image_aspect_ratio pad \
-    --group_by_modality_length True \e
+    --group_by_modality_length True \
     --bf16 True \
     --output_dir ./checkpoints/llava-uhd-v1.5-7b \
     --num_train_epochs 1 \
